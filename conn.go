@@ -335,6 +335,9 @@ startConn:
 
 	c.write(&Event{Command: USER, Params: []string{c.Config.User, "*", "*", c.Config.Name}})
 
+	// Calculate maximum message length for message splitting algorithm
+	c.maxMsgLen = c.getMaxLen()
+
 	// Send a virtual event allowing hooks for successful socket connection.
 	c.RunHandlers(&Event{Command: INITIALIZED, Params: []string{addr}})
 
@@ -427,9 +430,23 @@ func (c *Client) readLoop(ctx context.Context, errs chan error, wg *sync.WaitGro
 	}
 }
 
-// Send sends an event to the server. Use Client.RunHandlers() if you are
-// simply looking to trigger handlers with an event.
-func (c *Client) Send(event *Event) {
+// Send sends an event to the server. The event is potentially split
+// into mulitple events if it exceeds the maximum message length. A list
+// of all events, actually send to the server, is returned to allow for
+// further processing of potentially splitted events. Use
+// Client.RunHandlers() if you are simply looking to trigger handlers
+// with an event.
+func (c *Client) Send(event *Event) []*Event {
+	events := c.splitEvent(event)
+	for _, e := range events {
+		c.sendSingle(e)
+	}
+	return events
+}
+
+// sendSingle sends a single event to the server. The event is assumed
+// to not exceed the maximum message length.
+func (c *Client) sendSingle(event *Event) {
 	var delay time.Duration
 
 	if !c.Config.AllowFlood {
